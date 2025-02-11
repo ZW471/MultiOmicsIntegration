@@ -1,11 +1,8 @@
-install.packages("SeuratObject")
 >> ensure you have zlib
-install.packages("png")
-brew install igraph
-install.packages("Seurat")
-
 >> SeuratDisk must be downloaded from github
 if (!requireNamespace("remotes", quietly = TRUE)) {
   install.packages("remotes")
 }
 remotes::install_github("mojaveazure/seurat-disk")
+
+>> just simply run download.py and mojitoo_data_to_py.py
