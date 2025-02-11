@@ -4,8 +4,12 @@ processSeuratFile <- function(file_name, overwrite = TRUE, delete_h5s = TRUE, do
   message(sprintf("Download channel set to %s", download_channel))
 
   # Install packages if you haven't already
+  # run them in the console if they don't have the right to write
   if (!requireNamespace("Seurat", quietly = TRUE)) {
     install.packages("Seurat")
+  }
+  if (!requireNamespace("SeuratObject", quietly = TRUE)) {
+    install.packages("SeuratObject")
   }
   if (!requireNamespace("SeuratDisk", quietly = TRUE)) {
     if (!requireNamespace("remotes", quietly = TRUE)) {
@@ -17,6 +21,7 @@ processSeuratFile <- function(file_name, overwrite = TRUE, delete_h5s = TRUE, do
   # Load required libraries
   library(Seurat)
   library(SeuratDisk)
+  library(SeuratObject)
 
   # Construct the source file path (assumes RDS is in data/)
   source_file <- sprintf("data/%s.Rds", file_name)

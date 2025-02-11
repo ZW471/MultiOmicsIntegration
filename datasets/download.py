@@ -34,11 +34,14 @@ def download_file(url, file_path):
 if __name__ == "__main__":
     # https://zenodo.org/records/6348128
     # Replace the URL with your dataset's URL.
-    url = "https://zenodo.org/records/6348128/files/LUNG-CITE.Rds?download=1"
-    # Specify the full download path. For example, here it will save to a folder named 'downloads'
-    file_path = "data/LUNG-CITE.Rds"
+    file_names = ['LUNG-CITE', 'BM-CITE', 'PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE']
 
-    download_file(url, file_path)
-    print("Download completed!")
+    for file_name in file_names:
+        url = f"https://zenodo.org/records/6348128/files/{file_name}.Rds?download=1"
+        # Specify the full download path. For example, here it will save to a folder named 'downloads'
+        file_path = f"data/{file_name}.Rds"
+
+        download_file(url, file_path)
+        print("Download completed!")
 
 
