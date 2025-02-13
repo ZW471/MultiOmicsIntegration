@@ -1,0 +1,3 @@
+[submodule "MOJITOO"]
+	path = MOJITOO
+	url = https://github.com/ZW471/MOJITOO.git
