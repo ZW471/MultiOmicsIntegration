@@ -1,6 +1,7 @@
 import os
 import requests
 from tqdm import tqdm
+import subprocess
 
 def download_file(url, file_path):
     """
@@ -34,7 +35,8 @@ def download_file(url, file_path):
 if __name__ == "__main__":
     # https://zenodo.org/records/6348128
     # Replace the URL with your dataset's URL.
-    file_names = ['LUNG-CITE', 'BM-CITE', 'PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE']
+    # select from 'LUNG-CITE', 'BM-CITE', 'PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE'
+    file_names = ['PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE']
 
     for file_name in file_names:
         url = f"https://zenodo.org/records/6348128/files/{file_name}.Rds?download=1"
@@ -43,5 +45,8 @@ if __name__ == "__main__":
 
         download_file(url, file_path)
         print("Download completed!")
+
+        # print("Converting to python")
+        # subprocess.run(["Rscript", "mojitoo_data_to_py.R", file_name], check=True)
 
 
