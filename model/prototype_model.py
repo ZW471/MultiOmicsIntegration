@@ -1,13 +1,13 @@
 #%%
 import scanpy as sc
-from datasets.preprocess import preprocess_scRNA, preprocess_ADT
-
-# Read the h5ad file created from Seurat
-protein_data = preprocess_scRNA("./datasets/data/processed/LUNG-CITE_RNA.h5ad", h5ad_out="./datasets/data/processed/LUNG-CITE/RNA.h5ad")
-rna_data = preprocess_ADT("./datasets/data/processed/LUNG-CITE_ADT.h5ad", h5ad_out="./datasets/data/processed/LUNG-CITE/ADT.h5ad")
-
-print(protein_data)
-print(rna_data)
+# from datasets.preprocess import preprocess_scRNA, preprocess_ADT
+#
+# # Read the h5ad file created from Seurat
+# protein_data = preprocess_scRNA("./datasets/data/processed/LUNG-CITE_RNA.h5ad", h5ad_out="./datasets/data/processed/LUNG-CITE/RNA.h5ad")
+# rna_data = preprocess_ADT("./datasets/data/processed/LUNG-CITE_ADT.h5ad", h5ad_out="./datasets/data/processed/LUNG-CITE/ADT.h5ad")
+#
+# print(protein_data)
+# print(rna_data)
 #%%
 import scanpy as sc
 
@@ -16,6 +16,7 @@ modalities = ["ADT", "RNA"]
 data = {}
 
 for modality in modalities:
+    # data[modality] = sc.read_h5ad(f"./datasets/data/processed/LUNG-CITE_{modality}.h5ad")
     data[modality] = sc.read_h5ad(f"./datasets/data/processed/LUNG-CITE/{modality}.h5ad")
 
 data
@@ -24,6 +25,7 @@ import torch
 
 processed = {m: {'x': torch.tensor(data[m].X, dtype=torch.float)} for m in modalities}
 processed
+
 #%%
 from torch_geometric.data import HeteroData
 
@@ -63,7 +65,7 @@ neighbor_loader = NeighborLoader(
         ('cell', 'RNA', 'cell'): [10, 10]
     },
     input_nodes=('cell', cell_idx),
-    batch_size=1024  # choose an appropriate batch size for your memory constraints
+    batch_size=2048  # choose an appropriate batch size for your memory constraints
 )
 
 for batch in neighbor_loader:
@@ -74,7 +76,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torch_geometric.nn import HeteroConv, GCNConv
+from torch_geometric.nn import HeteroConv, GCNConv, GATv2Conv
 from torch_geometric.utils import negative_sampling
 
 # Heterogeneous Graph Autoencoder model (without variational reparameterization).
@@ -90,7 +92,7 @@ class HeteroGraphAE(nn.Module):
         # Intermediate layers (if num_layers > 1).
         self.layers = nn.ModuleList([
             HeteroConv({
-                ('cell', m, 'cell'): GCNConv(hidden_channels, hidden_channels) for m in modalities
+                ('cell', m, 'cell'): GATv2Conv(hidden_channels, hidden_channels // 8, heads=8) for m in modalities
             }, aggr='sum')
             for _ in range(num_layers - 1)
         ])
@@ -102,6 +104,7 @@ class HeteroGraphAE(nn.Module):
         self.z_conv = HeteroConv({
             ('cell', m, 'cell'): GCNConv(hidden_channels, latent_channels) for m in modalities
         }, aggr='sum')
+
 
     def encode(self, data):
         x_dict = {'cell': data['cell'].x}
@@ -209,55 +212,55 @@ class GraphAELightningModule(pl.LightningModule):
         return loss
 
 
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-    #
-    #     def lr_lambda(current_epoch):
-    #         if current_epoch < self.warmup_epochs:
-    #             # Linear warm-up.
-    #             return float(current_epoch) / float(max(1, self.warmup_epochs))
-    #         else:
-    #             # Cosine decay.
-    #             progress = (current_epoch - self.warmup_epochs) / float(max(1, self.total_epochs - self.warmup_epochs))
-    #             return 0.5 * (1.0 + math.cos(math.pi * progress))
-    #
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-    #     return {
-    #         'optimizer': optimizer,
-    #         'lr_scheduler': {
-    #             'scheduler': scheduler,
-    #             'interval': 'epoch',
-    #             'frequency': 1,
-    #         }
-    #     }
-
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode='min',         # Assumes lower validation loss is better.
-            factor=0.1,         # Factor by which the learning rate will be reduced.
-            patience=10,        # Number of epochs with no improvement after which LR will be reduced.
-            verbose=True
-        )
+        def lr_lambda(current_epoch):
+            if current_epoch < self.warmup_epochs:
+                # Linear warm-up.
+                return float(current_epoch) / float(max(1, self.warmup_epochs))
+            else:
+                # Cosine decay.
+                progress = (current_epoch - self.warmup_epochs) / float(max(1, self.total_epochs - self.warmup_epochs))
+                return 0.5 * (1.0 + math.cos(math.pi * progress))
 
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': scheduler,
-                'monitor': 'recon_loss',  # Metric to be monitored for plateau.
                 'interval': 'epoch',
                 'frequency': 1,
             }
         }
 
+    # def configure_optimizers(self):
+    #     optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    #
+    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #         optimizer,
+    #         mode='min',         # Assumes lower validation loss is better.
+    #         factor=0.1,         # Factor by which the learning rate will be reduced.
+    #         patience=10,        # Number of epochs with no improvement after which LR will be reduced.
+    #         verbose=True
+    #     )
+    #
+    #     return {
+    #         'optimizer': optimizer,
+    #         'lr_scheduler': {
+    #             'scheduler': scheduler,
+    #             'monitor': 'recon_loss',  # Metric to be monitored for plateau.
+    #             'interval': 'epoch',
+    #             'frequency': 1,
+    #         }
+    #     }
+
 
 # Hyperparameters.
 in_channels = 352
-hidden_channels = 512
-latent_channels = 512   # Dimensionality of the latent space.
-num_layers = 4
+hidden_channels = 64
+latent_channels = 64   # Dimensionality of the latent space.
+num_layers = 2
 learning_rate = 1e-3
 n_epochs = 500
 
@@ -285,8 +288,8 @@ from pytorch_lightning.callbacks import EarlyStopping
 
 early_stop_callback = EarlyStopping(
     monitor='train_loss',
-    min_delta=0.005,
-    patience=5,
+    min_delta=0.01,
+    patience=3,
     verbose=True,
     mode='min'
 )
@@ -299,7 +302,6 @@ trainer = Trainer(
 )
 trainer.fit(model, train_dataloaders=neighbor_loader)
 
-#%%
 
 # Inference on full data:
 model.eval()
@@ -314,10 +316,22 @@ with torch.no_grad():
     print("Predicted edge probabilities:", pred_edge_probs)
 
 #%%
+protein_data = sc.read_h5ad("./datasets/data/processed/LUNG-CITE_ADT.h5ad")
 protein_data.obsm["emb"] = z.detach().cpu().numpy()
 # protein_data.obsm["emb"] = data['cell'].x.detach().cpu().numpy()
 sc.pp.neighbors(protein_data, use_rep='emb')
 sc.tl.louvain(protein_data, resolution=0.5)
 sc.tl.umap(protein_data)
 sc.pl.embedding(protein_data, color='louvain', basis='umap')
-#%%
+
+
+gt = protein_data.obs['celltype'].tolist()
+pred = protein_data.obs['louvain'].tolist()
+
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
+ari = adjusted_rand_score(gt, pred)
+nmi = normalized_mutual_info_score(gt, pred)
+
+print("Adjusted Rand Index:", ari)
+print("Normalized Mutual Information:", nmi)
