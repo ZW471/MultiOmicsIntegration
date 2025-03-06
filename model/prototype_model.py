@@ -11,19 +11,19 @@ import scanpy as sc
 #%%
 import scanpy as sc
 
-modalities = ["ADT", "RNA"]
+modalities = ["ATAC", "RNA"]
 
 data = {}
 
 for modality in modalities:
     # data[modality] = sc.read_h5ad(f"./datasets/data/processed/LUNG-CITE_{modality}.h5ad")
-    data[modality] = sc.read_h5ad(f"./datasets/data/processed/LUNG-CITE/{modality}.h5ad")
-
+    # data[modality] = sc.read_h5ad(f"./datasets/data/processed/LUNG-CITE/{modality}.h5ad")
+    data[modality] = sc.read_h5ad(f"./datasets/data/processed/{modality.lower()}-match.h5ad")
 data
 #%%
 import torch
 
-processed = {m: {'x': torch.tensor(data[m].X, dtype=torch.float)} for m in modalities}
+processed = {m: {'x': torch.tensor(data[m].obsm['X_glue'], dtype=torch.float)} for m in modalities}
 processed
 
 #%%
@@ -61,8 +61,7 @@ cell_idx = torch.arange(num_cells)
 neighbor_loader = NeighborLoader(
     data,
     num_neighbors={
-        ('cell', 'ADT', 'cell'): [10, 10],  # sample 10 neighbors for 2 layers (example)
-        ('cell', 'RNA', 'cell'): [10, 10]
+        ('cell', m, 'cell'): [5, 5] for m in modalities
     },
     input_nodes=('cell', cell_idx),
     batch_size=2048  # choose an appropriate batch size for your memory constraints
@@ -257,9 +256,9 @@ class GraphAELightningModule(pl.LightningModule):
 
 
 # Hyperparameters.
-in_channels = 352
-hidden_channels = 64
-latent_channels = 64   # Dimensionality of the latent space.
+in_channels = 512
+hidden_channels = 512
+latent_channels = 256   # Dimensionality of the latent space.
 num_layers = 2
 learning_rate = 1e-3
 n_epochs = 500
@@ -288,7 +287,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 
 early_stop_callback = EarlyStopping(
     monitor='train_loss',
-    min_delta=0.01,
+    min_delta=0.001,
     patience=3,
     verbose=True,
     mode='min'
@@ -316,7 +315,7 @@ with torch.no_grad():
     print("Predicted edge probabilities:", pred_edge_probs)
 
 #%%
-protein_data = sc.read_h5ad("./datasets/data/processed/LUNG-CITE_ADT.h5ad")
+protein_data = sc.read_h5ad("./datasets/data/processed/rna-match.h5ad")
 protein_data.obsm["emb"] = z.detach().cpu().numpy()
 # protein_data.obsm["emb"] = data['cell'].x.detach().cpu().numpy()
 sc.pp.neighbors(protein_data, use_rep='emb')
@@ -324,8 +323,8 @@ sc.tl.louvain(protein_data, resolution=0.5)
 sc.tl.umap(protein_data)
 sc.pl.embedding(protein_data, color='louvain', basis='umap')
 
-
-gt = protein_data.obs['celltype'].tolist()
+#%%
+gt = protein_data.obs['cell_type'].tolist()
 pred = protein_data.obs['louvain'].tolist()
 
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
