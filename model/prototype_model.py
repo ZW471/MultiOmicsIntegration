@@ -64,7 +64,7 @@ neighbor_loader = NeighborLoader(
         ('cell', m, 'cell'): [5, 5] for m in modalities
     },
     input_nodes=('cell', cell_idx),
-    batch_size=2048  # choose an appropriate batch size for your memory constraints
+    batch_size=512  # choose an appropriate batch size for your memory constraints
 )
 
 for batch in neighbor_loader:
@@ -91,7 +91,7 @@ class HeteroGraphAE(nn.Module):
         # Intermediate layers (if num_layers > 1).
         self.layers = nn.ModuleList([
             HeteroConv({
-                ('cell', m, 'cell'): GATv2Conv(hidden_channels, hidden_channels // 8, heads=8) for m in modalities
+                ('cell', m, 'cell'): GATv2Conv(hidden_channels, hidden_channels, heads=4, concat=False) for m in modalities
             }, aggr='sum')
             for _ in range(num_layers - 1)
         ])
@@ -103,6 +103,15 @@ class HeteroGraphAE(nn.Module):
         self.z_conv = HeteroConv({
             ('cell', m, 'cell'): GCNConv(hidden_channels, latent_channels) for m in modalities
         }, aggr='sum')
+
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_channels, hidden_channels),
+            nn.SiLU(),
+            nn.Linear(hidden_channels, latent_channels),
+            nn.SiLU(),
+            nn.Linear(latent_channels, 1),
+            nn.Sigmoid()
+        )
 
 
     def encode(self, data):
@@ -123,10 +132,10 @@ class HeteroGraphAE(nn.Module):
         return z_dict
 
     def decode(self, z, edge_index):
-        # Dot-product decoder: compute similarity scores for given edges.
-        z_src = z[edge_index[0]]
-        z_dst = z[edge_index[1]]
-        return torch.sigmoid((z_src * z_dst).sum(dim=1))
+        z_src = F.normalize(z[edge_index[0]], p=2, dim=1)
+        z_dst = F.normalize(z[edge_index[1]], p=2, dim=1)
+        return self.decoder((z_src * z_dst))
+
 
     def forward(self, data):
         z_dict = self.encode(data)

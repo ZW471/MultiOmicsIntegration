@@ -52,15 +52,17 @@ class MultiOmicsDataModule(pl.LightningDataModule):
 # ---------------------------
 from torch_geometric.nn import MessagePassing
 
-# --- New: Cell-to-cell Message Passing Module ---
+# --- New: Dropout-enhanced Cell-to-cell Message Passing Module ---
 class CellMP(MessagePassing):
-    def __init__(self, cell_dim, hidden_dim):
+    def __init__(self, cell_dim, hidden_dim, dropout=0.1):
         super(CellMP, self).__init__(aggr='add')
         self.fc_message = nn.Sequential(
             nn.Linear(2 * cell_dim, hidden_dim),
             nn.SiLU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
+            nn.Dropout(dropout)
         )
         self.fc_update = nn.Linear(hidden_dim, hidden_dim)
         self.activation = nn.SiLU()
@@ -75,14 +77,17 @@ class CellMP(MessagePassing):
     def update(self, aggr_out):
         return self.fc_update(aggr_out)
 
+# --- Dropout-enhanced IntraModality Message Passing with optional edge gating ---
 class IntraModalityMP(MessagePassing):
-    def __init__(self, node_dim, edge_attr_dim, hidden_dims):
+    def __init__(self, node_dim, edge_attr_dim, hidden_dims, dropout=0.1):
         super(IntraModalityMP, self).__init__(aggr='add')
         self.fc_message = nn.Sequential(
             nn.Linear(node_dim * 2 + edge_attr_dim, hidden_dims),
             nn.SiLU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dims, hidden_dims),
             nn.SiLU(),
+            nn.Dropout(dropout),
         )
         self.fc_update = nn.Linear(hidden_dims, hidden_dims)
         self.activation = nn.SiLU()
@@ -90,6 +95,7 @@ class IntraModalityMP(MessagePassing):
         self.edge_gate = nn.Sequential(
             nn.Linear(edge_attr_dim, edge_attr_dim),
             nn.SiLU(),
+            nn.Dropout(dropout),
             nn.Linear(edge_attr_dim, 1),
             nn.Sigmoid()
         )
@@ -107,16 +113,22 @@ class IntraModalityMP(MessagePassing):
     def update(self, aggr_out):
         return self.fc_update(aggr_out)
 
+# --- Dropout-enhanced Modality-to-Cell Message Passing Module ---
 class ModalityToCellMP(MessagePassing):
-    def __init__(self, node_dim, cell_dim, hidden_cell_dim):
+    def __init__(self, node_dim, cell_dim, hidden_cell_dim, dropout=0.1):
         super(ModalityToCellMP, self).__init__(aggr='add')
         self.cell_gate = nn.Sequential(
             nn.Linear(cell_dim, cell_dim),
             nn.SiLU(),
+            nn.Dropout(dropout),
             nn.Linear(cell_dim, 1),
             nn.Sigmoid()
         )
-        self.fc_message = nn.Linear(node_dim + cell_dim, hidden_cell_dim)
+        self.fc_message = nn.Sequential(
+            nn.Linear(node_dim + cell_dim, hidden_cell_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout)
+        )
         self.fc_update = nn.Linear(hidden_cell_dim, hidden_cell_dim)
         self.activation = nn.SiLU()
 
@@ -131,36 +143,52 @@ class ModalityToCellMP(MessagePassing):
     def update(self, aggr_out):
         return self.fc_update(aggr_out)
 
-# --- New: Message Passing from Cell to Modalities ---
+# --- New: Message Passing from Cell to Modalities with Multi-head Attention ---
 class CellToModalityMP(MessagePassing):
-    def __init__(self, cell_dim, node_dim, hidden_node_dim):
+    def __init__(self, cell_dim, node_dim, hidden_node_dim, num_heads=4, dropout=0.1):
         super(CellToModalityMP, self).__init__(aggr='add')
+        self.num_heads = num_heads
+        self.hidden_dim_per_head = hidden_node_dim // num_heads
+        # Linear projections for multi-head attention.
+        self.query_lin = nn.Linear(node_dim, hidden_node_dim)
+        self.key_lin = nn.Linear(cell_dim, hidden_node_dim)
+        self.value_lin = nn.Linear(cell_dim, hidden_node_dim)
+        self.out_lin = nn.Linear(hidden_node_dim, hidden_node_dim)
+        self.dropout = nn.Dropout(dropout)
         self.activation = nn.SiLU()
         self.modality_gate = nn.Sequential(
             nn.Linear(node_dim, node_dim),
-            self.activation,
+            nn.SiLU(),
+            nn.Dropout(dropout),
             nn.Linear(node_dim, 1),
             nn.Sigmoid()
         )
-        self.fc_message = nn.Sequential(
-            nn.Linear(cell_dim + node_dim, hidden_node_dim),
-            self.activation,
-            nn.Linear(hidden_node_dim, hidden_node_dim),
-            self.activation,
-        )
-        self.fc_update = nn.Linear(hidden_node_dim, hidden_node_dim)
 
     def forward(self, cell, modality, edge_index):
         return self.propagate(edge_index, c=cell, m=modality)
 
     def message(self, c_j, m_i):
+        # Multi-head attention: compute query, key, value.
+        Q = self.query_lin(m_i)  # shape: (num_edges, hidden_node_dim)
+        K = self.key_lin(c_j)    # shape: (num_edges, hidden_node_dim)
+        V = self.value_lin(c_j)  # shape: (num_edges, hidden_node_dim)
+        # Reshape for multi-head attention.
+        Q = Q.view(-1, self.num_heads, self.hidden_dim_per_head)
+        K = K.view(-1, self.num_heads, self.hidden_dim_per_head)
+        V = V.view(-1, self.num_heads, self.hidden_dim_per_head)
+        # Compute scaled dot-product attention scores.
+        attn_scores = (Q * K).sum(dim=-1) / (self.hidden_dim_per_head ** 0.5)  # (num_edges, num_heads)
+        attn_weights = torch.softmax(attn_scores, dim=-1).unsqueeze(-1)  # (num_edges, num_heads, 1)
+        attn_output = (attn_weights * V).view(-1, self.num_heads * self.hidden_dim_per_head)
+        out = self.out_lin(attn_output)
+        out = self.dropout(out)
         a = self.modality_gate(m_i)
-        m_ij = self.fc_message(torch.cat([c_j, m_i], dim=-1))
-        return self.activation(m_ij) * a
+        return self.activation(out) * a
 
     def update(self, aggr_out):
-        return self.fc_update(aggr_out)
+        return aggr_out
 
+# --- MultiOmics Embedding ---
 class MultiOmicsEmbedding(nn.Module):
     def __init__(self, modality_in_dims, cell_in_dims, edge_attr_dims, modality_hidden_dims, modalities, cell_hidden_dims):
         super().__init__()
@@ -185,6 +213,7 @@ class MultiOmicsEmbedding(nn.Module):
         C = self.cell_emb(batch['cell'].x)
         return H, C
 
+# --- MultiOmics Layer ---
 class MultiOmicsLayer(nn.Module):
     def __init__(self, modality_in_dims, cell_in_dims, edge_attr_dims, modality_hidden_dims, cell_hidden_dims, modalities):
         super().__init__()
@@ -213,7 +242,6 @@ class MultiOmicsLayer(nn.Module):
             ) for m in modalities
         })
         # --- New: Cell-to-cell message passing module ---
-        # Note: The cell embeddings have been transformed to cell_hidden_dims.
         self.cell_mp = CellMP(cell_dim=cell_hidden_dims, hidden_dim=cell_hidden_dims)
 
     def forward(self, batch, H, C):
@@ -245,6 +273,7 @@ class MultiOmicsLayer(nn.Module):
 
         return H, C
 
+# --- MultiOmics Integration ---
 class MultiOmicsIntegration(nn.Module):
     def __init__(self, modality_in_dims, cell_in_dims, edge_attr_dims, modality_hidden_dims, cell_hidden_dims,
                  modalities, layer_num=2):
@@ -374,6 +403,12 @@ class MultiOmicsLitModel(pl.LightningModule):
 
         self.learning_rate = 1e-3
 
+        # ----- New: Cluster Loss parameters -----
+        self.num_clusters = 10  # Adjust the number of clusters as needed.
+        self.lambda_cluster = 1.0  # Weighting factor for the cluster loss.
+        # Initialize cluster centers as trainable parameters.
+        self.cluster_centers = nn.Parameter(torch.randn(self.num_clusters, self.encoder.cell_hidden_dims))
+
     def forward(self, batch):
         # Get encoder outputs: H is per-modality latent features and C is the latent cell embedding.
         H, C = self.encoder(batch)
@@ -398,10 +433,21 @@ class MultiOmicsLitModel(pl.LightningModule):
         # Number of positive cell–cell edges from the batch.
         num_pos = batch['cell', 'similar_to', 'cell'].edge_index.size(1)
 
-        # Negative edge sampling: sample random pairs from the latent cell embeddings C.
-        neg_src = torch.randint(0, C.size(0), (num_pos,), device=C.device)
-        neg_tgt = torch.randint(0, C.size(0), (num_pos,), device=C.device)
-        neg_edge_input = torch.cat([C[neg_src], C[neg_tgt]], dim=-1)
+        # ----- Advanced Negative Sampling (Hard Negatives) -----
+        pos_edge_index = batch['cell', 'similar_to', 'cell'].edge_index  # shape: [2, num_pos]
+        num_candidates = 5
+        # For each positive edge, fix the source and sample candidate target indices.
+        neg_src_candidates = pos_edge_index[0].unsqueeze(1).repeat(1, num_candidates)
+        candidate_tgt = torch.randint(0, C.size(0), (num_pos, num_candidates), device=C.device)
+        # Compute distances between the source and candidate targets.
+        src_emb = C[neg_src_candidates]  # shape: (num_pos, num_candidates, cell_hidden_dims)
+        tgt_emb_candidates = C[candidate_tgt]  # shape: (num_pos, num_candidates, cell_hidden_dims)
+        dist_candidates = torch.norm(src_emb - tgt_emb_candidates, dim=-1)  # shape: (num_pos, num_candidates)
+        # Choose the candidate with the minimum distance (i.e. the hardest negative).
+        min_idx = dist_candidates.argmin(dim=1)  # shape: (num_pos,)
+        neg_tgt = candidate_tgt[torch.arange(num_pos), min_idx]
+        # Use the same source nodes as the positive edges.
+        neg_edge_input = torch.cat([C[pos_edge_index[0]], C[neg_tgt]], dim=-1)
         neg_cell_edge_pred = self.decoder.cell_edge_decoder(neg_edge_input)
 
         # Combine positive and negative predictions and create labels.
@@ -409,8 +455,13 @@ class MultiOmicsLitModel(pl.LightningModule):
         all_labels = torch.cat([torch.ones_like(pos_cell_edge_pred), torch.zeros_like(neg_cell_edge_pred)], dim=0)
         loss_cell_edges = F.binary_cross_entropy(all_preds, all_labels) * 10
 
+        # ----- New: Cluster Loss on C using Soft Assignments -----
+        distances = torch.cdist(C, self.cluster_centers, p=2)
+        soft_assignments = F.softmax(-distances, dim=1)  # Closer centers get higher weights.
+        loss_cluster = (soft_assignments * distances).sum(dim=1).mean() * self.lambda_cluster
+
         # Total loss.
-        loss = loss_modality + loss_cell + loss_cell_edges
+        loss = loss_modality + loss_cell + loss_cell_edges + loss_cluster
 
         # Explicitly provide the batch size from the cell nodes to avoid iteration over batch.
         batch_size = batch['cell'].x.size(0)
@@ -418,15 +469,27 @@ class MultiOmicsLitModel(pl.LightningModule):
         self.log("cell_loss", loss_cell, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log("modality_loss", loss_modality, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log("cell_edge_loss", loss_cell_edges, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log("cluster_loss", loss_cluster, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
         return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
-            list(self.encoder.parameters()) + list(self.decoder.parameters()),
-            lr=self.learning_rate
+            list(self.encoder.parameters()) + list(self.decoder.parameters()) + [self.cluster_centers],
+            lr=self.learning_rate,
+            weight_decay=1e-4  # Added weight decay for regularization.
         )
-        return optimizer
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=5
+        )
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'train_loss',
+                'frequency': 1
+            }
+        }
 
 # ---------------------------
 # Main execution: instantiate DataModule, model and start training
