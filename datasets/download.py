@@ -36,7 +36,7 @@ if __name__ == "__main__":
     # https://zenodo.org/records/6348128
     # Replace the URL with your dataset's URL.
     # select from 'LUNG-CITE', 'BM-CITE', 'PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE'
-    file_names = ['PBMC-DOGMA', 'PBMC-Multiome', 'PBMC-TEA', 'Skin-SHARE']
+    file_names = ['PBMC-DOGMA', 'PBMC-TEA']
 
     for file_name in file_names:
         url = f"https://zenodo.org/records/6348128/files/{file_name}.Rds?download=1"
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         download_file(url, file_path)
         print("Download completed!")
 
-        # print("Converting to python")
-        # subprocess.run(["Rscript", "mojitoo_data_to_py.R", file_name], check=True)
+        print("Converting to python")
+        subprocess.run(["Rscript", "mojitoo_data_to_py.R", file_name], check=True)
 
 

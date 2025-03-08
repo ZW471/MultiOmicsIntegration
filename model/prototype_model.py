@@ -42,7 +42,7 @@ data = data.to(device)
 for m in modalities:
     data['cell', m, 'cell'].edge_index = knn_graph(
         data[m].x,
-        k=10,
+        k=20,
         cosine=True,
         num_workers=16
     )
@@ -148,60 +148,67 @@ class GraphAELightningModule(pl.LightningModule):
             num_layers=num_layers
         )
         self.learning_rate = learning_rate
-
+        self.modalities = modalities
         # Initialize clustering parameters
         self.num_clusters = num_clusters
         self.clustering_weight = clustering_weight
         # Learnable cluster centers (initialized randomly)
         self.cluster_centers = torch.nn.Parameter(torch.randn(num_clusters, latent_channels))
+        # Edge decoder now outputs logits of shape [*, m+1]
+        self.edge_decoder = nn.Linear(latent_channels, len(modalities) + 1)
 
     def forward(self, data):
         return self.model(data)
 
     def compute_clustering_loss(self, z):
-        """
-        Compute clustering loss as the mean L2 distance from each latent embedding
-        to its nearest cluster center.
-        z: Tensor of shape [num_nodes, latent_channels]
-        """
-        # Compute pairwise Euclidean distances between embeddings and cluster centers.
         distances = torch.cdist(z, self.cluster_centers, p=2)  # shape: [num_nodes, num_clusters]
-        # For each embedding, take the distance to the closest center.
         min_distances, _ = torch.min(distances, dim=1)
-        # Clustering loss is the average of these minimum distances.
         return torch.mean(min_distances)
 
     def training_step(self, batch, batch_idx):
-        # Obtain latent embeddings.
         z = self.model(batch)
 
-        # Aggregate positive edges from all 'cell'–to–'cell' relations.
-        pos_edge_list = []
-        for key, edge_index in batch.edge_index_dict.items():
-            if key[0] == 'cell' and key[2] == 'cell':
-                pos_edge_list.append(edge_index)
-        if len(pos_edge_list) == 0:
-            raise ValueError("No 'cell'-to-'cell' edges found in data.edge_index_dict.")
-        pos_edge_index = torch.cat(pos_edge_list, dim=1)
+        pos_logits_list = []
+        pos_labels_list = []
 
-        # Sample negative edges.
+        # Loop over each modality edge type.
+        for modality in self.modalities:
+            key = ('cell', modality, 'cell')
+            if key in batch.edge_index_dict:
+                edge_index = batch.edge_index_dict[key]
+                z_src = z[edge_index[0]]
+                z_dst = z[edge_index[1]]
+                edge_features = z_src * z_dst
+                logits = self.edge_decoder(edge_features)
+                pos_logits_list.append(logits)
+                modality_idx = self.modalities.index(modality)
+                labels = torch.full((edge_index.size(1),), modality_idx, dtype=torch.long, device=z.device)
+                pos_labels_list.append(labels)
+
+        if len(pos_logits_list) == 0:
+            raise ValueError("No 'cell'-to-'cell' positive edges found in batch.edge_index_dict.")
+
+        all_pos_edge_indices = [batch.edge_index_dict[key] for key in batch.edge_index_dict
+                                if key[0]=='cell' and key[2]=='cell']
+        pos_edge_index = torch.cat(all_pos_edge_indices, dim=1)
+
         neg_edge_index = negative_sampling(
             edge_index=pos_edge_index,
             num_nodes=z.size(0),
             num_neg_samples=pos_edge_index.size(1)
         )
+        z_src_neg = z[neg_edge_index[0]]
+        z_dst_neg = z[neg_edge_index[1]]
+        neg_edge_features = z_src_neg * z_dst_neg
+        neg_logits = self.edge_decoder(neg_edge_features)
+        neg_labels = torch.full((neg_edge_index.size(1),), len(self.modalities), dtype=torch.long, device=z.device)
 
-        # Compute predictions for positive and negative edges.
-        pos_pred = self.model.decode(z, pos_edge_index)
-        neg_pred = self.model.decode(z, neg_edge_index)
-        preds = torch.cat([pos_pred, neg_pred], dim=0)
-        labels = torch.cat([torch.ones_like(pos_pred), torch.zeros_like(neg_pred)], dim=0)
-        recon_loss = F.binary_cross_entropy(preds, labels)
+        logits_all = torch.cat(pos_logits_list + [neg_logits], dim=0)
+        labels_all = torch.cat(pos_labels_list + [neg_labels], dim=0)
 
-        # Compute clustering loss.
+        # Use cross-entropy loss on raw logits
+        recon_loss = F.cross_entropy(logits_all, labels_all)
         cluster_loss = self.compute_clustering_loss(z)
-
-        # Total loss: reconstruction loss + weighted clustering loss.
         loss = recon_loss + self.clustering_weight * cluster_loss
 
         batch_size = batch['cell'].x.size(0)
@@ -210,16 +217,13 @@ class GraphAELightningModule(pl.LightningModule):
         self.log("cluster_loss", cluster_loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         return loss
 
-
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
         def lr_lambda(current_epoch):
             if current_epoch < self.warmup_epochs:
-                # Linear warm-up.
                 return float(current_epoch) / float(max(1, self.warmup_epochs))
             else:
-                # Cosine decay.
                 progress = (current_epoch - self.warmup_epochs) / float(max(1, self.total_epochs - self.warmup_epochs))
                 return 0.5 * (1.0 + math.cos(math.pi * progress))
 
@@ -233,34 +237,22 @@ class GraphAELightningModule(pl.LightningModule):
             }
         }
 
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-    #
-    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #         optimizer,
-    #         mode='min',         # Assumes lower validation loss is better.
-    #         factor=0.1,         # Factor by which the learning rate will be reduced.
-    #         patience=10,        # Number of epochs with no improvement after which LR will be reduced.
-    #         verbose=True
-    #     )
-    #
-    #     return {
-    #         'optimizer': optimizer,
-    #         'lr_scheduler': {
-    #             'scheduler': scheduler,
-    #             'monitor': 'recon_loss',  # Metric to be monitored for plateau.
-    #             'interval': 'epoch',
-    #             'frequency': 1,
-    #         }
-    #     }
+    # New method to decode edges that returns softmax probabilities.
+    def decode_edges(self, z, edge_index):
+        z_src = z[edge_index[0]]
+        z_dst = z[edge_index[1]]
+        edge_features = z_src * z_dst
+        logits = self.edge_decoder(edge_features)
+        # Apply softmax to output probabilities over [m+1] classes.
+        return F.softmax(logits, dim=1)
 
 
 # Hyperparameters.
 in_channels = 512
 hidden_channels = 512
 latent_channels = 256   # Dimensionality of the latent space.
-num_layers = 2
-learning_rate = 1e-3
+num_layers = 3
+learning_rate = 1e-4
 n_epochs = 500
 
 # Ensure that `modalities` and your dataloader (e.g., neighbor_loader) are defined.
@@ -303,16 +295,17 @@ trainer.fit(model, train_dataloaders=neighbor_loader)
 
 
 # Inference on full data:
+# Inference on full data:
 model.eval()
 with torch.no_grad():
-    # Move data to the same device as the model.
     data = data.to(model.device)
     z = model(data)
-    # For example, reconstruct edge probabilities using one set of edges.
+    # For example, use one set of edges from data.edge_index_dict:
     pos_edge_index = list(data.edge_index_dict.values())[0]
-    pred_edge_probs = model.model.decode(z, pos_edge_index)
-    print(f"nde_embedding: {z}")
-    print("Predicted edge probabilities:", pred_edge_probs)
+    # Get softmax probabilities for edge predictions:
+    pred_edge_probs = model.decode_edges(z, pos_edge_index)
+    print("Edge prediction softmax probabilities:", pred_edge_probs)
+
 
 #%%
 protein_data = sc.read_h5ad("./datasets/data/processed/rna-match.h5ad")
