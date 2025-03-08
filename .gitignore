@@ -4,3 +4,8 @@
 /.idea
 /data/
 /MOJITOO/
+*.yml
+*.yaml
+*.pt
+*.ckpt
+*.csv
