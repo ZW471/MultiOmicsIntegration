@@ -12,7 +12,7 @@ class HeteroGraphAE(nn.Module):
         super().__init__()
         # First heterogeneous convolution layer.
         self.conv1 = HeteroConv({
-            ('cell', m, 'cell'): GCNConv(in_channels, hidden_channels) for m in modalities
+            ('cell', m, 'cell'): GCNConv(in_channels, hidden_channels, add_self_loops=False) for m in modalities
         }, aggr='sum')
         self.bn1 = nn.ModuleDict({'cell': nn.BatchNorm1d(hidden_channels)})
 
