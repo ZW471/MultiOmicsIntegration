@@ -46,15 +46,18 @@ def plot_degree_distributions(hetero_data, modalities):
     return fig
 
 def plot_modality_umaps(data_dict, modalities):
-    """Generate UMAP projections for multiple modalities"""
-    fig, axes = plt.subplots(1, len(modalities), figsize=(15, 4))
-    for ax, modality in zip(axes, modalities):
+    """Generate UMAP projections for each modality."""
+    modality_figs = {}
+    for modality in modalities:
         adata = data_dict[modality]
+        # Choose PCA representation if available, otherwise use raw X
         use_rep = 'X_pca' if 'X_pca' in adata.obsm else 'X'
         
+        # Create a new figure for this modality
+        fig, ax = plt.subplots(figsize=(6, 5))
         sc.pp.neighbors(adata, n_neighbors=10, use_rep=use_rep)
         sc.tl.umap(adata)
         sc.pl.umap(adata, ax=ax, show=False)
         ax.set_title(f"{modality} UMAP Projection")
-    plt.tight_layout()
-    return fig
+        modality_figs[modality] = fig
+    return modality_figs
