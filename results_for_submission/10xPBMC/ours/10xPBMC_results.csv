@@ -1,0 +1,2 @@
+dataset_name,in_channels,hidden_channels,latent_channels,num_layers,learning_rate,n_epochs,ARI,NMI
+10xPBMC,512,512,512,2,0.0001,500,0.7940164093312212,0.8457722900122312

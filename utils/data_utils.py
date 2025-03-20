@@ -33,6 +33,10 @@ dataset_config = {
     "Skin-SHARE": {
         "modalities": ["Peaks", "RNA"],
         "file_pattern": "{dataset}_{modality}.h5ad"
+    },
+    "10xPBMC": {
+        "modalities": ["ATAC", "RNA"],
+        "file_pattern": "{dataset}_{modality}.h5ad"
     }
 }
 
