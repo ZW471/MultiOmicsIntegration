@@ -3,7 +3,7 @@ import os
 import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import knn_graph
-from datasets.preprocess import preprocess_scRNA, preprocess_ADT, preprocess_scATAC
+from datasets.preprocess import preprocess_scRNA, preprocess_ADT, preprocess_scATAC, preprocess_Peaks
 
 dataset_config = {
     "BM-CITE": {
@@ -23,9 +23,8 @@ dataset_config = {
         "modality_map": {"adt": "ADT", "atac": "ATAC"}  # Handle lowercase
     },
     "PBMC-Multiome": {
-        "modalities": ["Peak", "RNA"],
+        "modalities": ["Peaks", "RNA"],
         "file_pattern": "{dataset}_{modality}.h5ad",
-        "modality_map": {"Peak": "Peaks"}  # Handle plural forms
     },
     "PBMC-TEA": {
         "modalities": ["ADT", "ATAC", "RNA"],
@@ -76,6 +75,8 @@ def load_dataset(dataset_name, base_dir, device):
                 n_pcs=config.get("pca_components", {}).get(modality, None))
         elif modality == "ATAC":
             data_dict[modality] = preprocess_scATAC(input_path)
+        elif modality == "Peaks":
+            data_dict[modality] = preprocess_Peaks(input_path)
         else:
             raise ValueError(f"Unsupported modality: {modality}")
     

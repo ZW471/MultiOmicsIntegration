@@ -164,6 +164,43 @@ def preprocess_scATAC(h5ad_in, h5ad_out=None,
 
     return adata
 
+def preprocess_Peaks(h5ad_in, h5ad_out=None, binarize=True, min_peaks_per_cell=500, min_cells_per_peak=10, n_pcs=100):
+    """
+    Preprocessing pipeline for Peak (or Peaks) modality data.
+    Steps:
+      1. Load data from the .h5ad file.
+      2. Convert to a dense matrix if needed.
+      3. Binarize the matrix (presence/absence of peaks).
+      4. Optionally filter low-quality cells/peaks (not implemented here but can be added).
+      5. Normalize, log-transform, scale, and compute PCA.
+    """
+    adata = sc.read_h5ad(h5ad_in)
+    
+    # Convert sparse matrix to dense 
+    X = adata.X.toarray() if issparse(adata.X) else adata.X
+    
+    # Binarize the data: 1 if peak is detected, 0 otherwise.
+    if binarize:
+        X = (X > 0).astype(np.float32)
+    adata.X = X
+
+    # If there are too few cells or peaks, skip further processing.
+    if adata.n_obs < 2 or adata.n_vars < 2:
+        print(f"Warning: After filtering, shape={adata.shape}. Skipping PCA.")
+        if h5ad_out is not None:
+            adata.write_h5ad(h5ad_out)
+        return adata
+
+    # Normalize total counts, log-transform, scale, and PCA.
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.scale(adata, max_value=10)
+    sc.tl.pca(adata, svd_solver='randomized', n_comps=n_pcs)
+
+    if h5ad_out is not None:
+        adata.write_h5ad(h5ad_out)
+    return adata
+
 def preprocess(sc_type, h5ad_in, h5ad_out=None, ignore_error=False, **kwargs):
     sc_type = sc_type.upper()
     if sc_type not in SC_TYPES:
