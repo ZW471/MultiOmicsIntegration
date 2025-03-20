@@ -1,0 +1,2 @@
+dataset_name,in_channels,hidden_channels,latent_channels,num_layers,learning_rate,n_epochs,ARI,NMI
+LUNG-CITE,3052,512,512,2,0.0001,500,0.5696950573345363,0.6989399534286077

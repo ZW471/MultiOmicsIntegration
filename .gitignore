@@ -26,3 +26,8 @@ utils/__pycache__/eval_utils.cpython-310.pyc
 utils/__pycache__/eval_utils.cpython-311.pyc
 utils/__pycache__/graph_utils.cpython-311.pyc
 MOJITOO
+*/lightning_logs/
+/lightning_logs/
+/evaluation/checkpoints
+*/checkpoints
+*.pt
