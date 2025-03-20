@@ -4,11 +4,6 @@
 /.idea
 /data/
 /MOJITOO/
-*.yml
-*.yaml
-*.ckpt
-*.pt
-*.csv
 MOJITOO
 datasets/__pycache__/__init__.cpython-311.pyc
 datasets/__pycache__/preprocess.cpython-311.pyc
@@ -31,3 +26,4 @@ MOJITOO
 /evaluation/checkpoints
 */checkpoints
 *.pt
+/evaluation
