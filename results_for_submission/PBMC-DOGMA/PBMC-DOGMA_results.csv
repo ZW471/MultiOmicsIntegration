@@ -1,0 +1,2 @@
+dataset_name,in_channels,hidden_channels,latent_channels,num_layers,learning_rate,n_epochs,ARI,NMI
+PBMC-DOGMA,8210,512,512,2,0.0001,500,0.3585752433657474,0.48719622291942416

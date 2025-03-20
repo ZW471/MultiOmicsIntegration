@@ -3,7 +3,7 @@ import os
 import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import knn_graph
-from datasets.preprocess import preprocess_scRNA, preprocess_ADT
+from datasets.preprocess import preprocess_scRNA, preprocess_ADT, preprocess_scATAC
 
 dataset_config = {
     "BM-CITE": {
@@ -74,5 +74,9 @@ def load_dataset(dataset_name, base_dir, device):
             data_dict[modality] = preprocess_ADT(
                 input_path,
                 n_pcs=config.get("pca_components", {}).get(modality, None))
+        elif modality == "ATAC":
+            data_dict[modality] = preprocess_scATAC(input_path)
+        else:
+            raise ValueError(f"Unsupported modality: {modality}")
     
     return create_hetero_graph(data_dict, config, device), data_dict
