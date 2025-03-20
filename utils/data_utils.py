@@ -3,7 +3,7 @@ import os
 import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import knn_graph
-from datasets.preprocess import preprocess_scRNA, preprocess_ADT, preprocess_scATAC, preprocess_Peaks
+from datasets.preprocess import preprocess_scRNA, preprocess_ADT, preprocess_scATAC, preprocess_Peaks, remove_lsi_key
 
 dataset_config = {
     "BM-CITE": {
@@ -32,6 +32,10 @@ dataset_config = {
     },
     "Skin-SHARE": {
         "modalities": ["Peaks", "RNA"],
+        "file_pattern": "{dataset}_{modality}.h5ad"
+    },
+    "10xPBMC": {
+        "modalities": ["ATAC", "RNA"],
         "file_pattern": "{dataset}_{modality}.h5ad"
     }
 }
@@ -74,9 +78,17 @@ def load_dataset(dataset_name, base_dir, device):
                 input_path,
                 n_pcs=config.get("pca_components", {}).get(modality, None))
         elif modality == "ATAC":
-            data_dict[modality] = preprocess_scATAC(input_path)
+            try:
+                data_dict[modality] = preprocess_scATAC(input_path)
+            except ValueError:
+                remove_lsi_key(input_path)
+                data_dict[modality] = preprocess_scATAC(input_path)
         elif modality == "Peaks":
-            data_dict[modality] = preprocess_Peaks(input_path)
+            try:
+                data_dict[modality] = preprocess_Peaks(input_path)
+            except ValueError:
+                remove_lsi_key(input_path)
+                data_dict[modality] = preprocess_Peaks(input_path)
         else:
             raise ValueError(f"Unsupported modality: {modality}")
     
